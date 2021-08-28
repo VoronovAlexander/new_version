@@ -48,7 +48,9 @@ class VersionStatus {
       else
         return false;
     } catch (e) {
-      return localVersion.compareTo(storeVersion).isNegative;
+      return localVersion
+          .compareTo(storeVersion)
+          .isNegative;
     }
   }
 
@@ -77,10 +79,15 @@ class NewVersion {
   /// See http://en.wikipedia.org/wiki/ ISO_3166-1_alpha-2 for a list of ISO Country Codes.
   final String? iOSAppStoreCountry;
 
+  /// An optional value that can override the default timeout when
+  /// will await response to reach Google Play Store and AppStore
+  final int timeout;
+
   NewVersion({
     this.androidId,
     this.iOSId,
     this.iOSAppStoreCountry,
+    this.timeout = 15
   });
 
   /// This checks the version status, then displays a platform-specific alert
@@ -103,7 +110,8 @@ class NewVersion {
       return _getAndroidStoreVersion(packageInfo);
     } else {
       debugPrint(
-          'The target platform "${Platform.operatingSystem}" is not yet supported by this package.');
+          'The target platform "${Platform
+              .operatingSystem}" is not yet supported by this package.');
     }
   }
 
@@ -116,7 +124,8 @@ class NewVersion {
       parameters.addAll({"country": iOSAppStoreCountry!});
     }
     var uri = Uri.https("itunes.apple.com", "/lookup", parameters);
-    final response = await http.get(uri);
+    final response = await http.get(uri).timeout(Duration(seconds: timeout),
+        onTimeout: () => http.Response('Timeout', 408));
     if (response.statusCode != 200) {
       debugPrint('Failed to query iOS App Store');
       return null;
@@ -140,8 +149,10 @@ class NewVersion {
       PackageInfo packageInfo) async {
     final id = androidId ?? packageInfo.packageName;
     final uri =
-        Uri.https("play.google.com", "/store/apps/details", {"id": "$id"});
-    final response = await http.get(uri);
+    Uri.https("play.google.com", "/store/apps/details", {"id": "$id"});
+    final response = await http.get(uri).timeout(Duration(seconds: timeout),
+        onTimeout: () => http.Response('Timeout', 408));
+    ;
     if (response.statusCode != 200) {
       debugPrint('Can\'t find an app in the Play Store with the id: $id');
       return null;
@@ -150,13 +161,13 @@ class NewVersion {
 
     final additionalInfoElements = document.getElementsByClassName('hAyfc');
     final versionElement = additionalInfoElements.firstWhere(
-      (elm) => elm.querySelector('.BgcNfc')!.text == 'Current Version',
+          (elm) => elm.querySelector('.BgcNfc')!.text == 'Current Version',
     );
     final storeVersion = versionElement.querySelector('.htlgb')!.text;
 
     final sectionElements = document.getElementsByClassName('W4P4ne');
     final releaseNotesElement = sectionElements.firstWhereOrNull(
-      (elm) => elm.querySelector('.wSaTQd')!.text == 'What\'s New',
+          (elm) => elm.querySelector('.wSaTQd')!.text == 'What\'s New',
     );
     final releaseNotes = releaseNotesElement
         ?.querySelector('.PHBdkd')
@@ -177,75 +188,83 @@ class NewVersion {
   /// To change the appearance and behavior of the update dialog, you can
   /// optionally provide [dialogTitle], [dialogText], [updateButtonText],
   /// [dismissButtonText], and [dismissAction] parameters.
-  void showUpdateDialog({
+  Future<bool?> showUpdateDialog({
     required BuildContext context,
     required VersionStatus versionStatus,
     String dialogTitle = 'Update Available',
     String? dialogText,
     String updateButtonText = 'Update',
     bool allowDismissal = true,
+    bool barrierDismissible = true,
+    bool reversedButtons = false,
     String dismissButtonText = 'Maybe Later',
     VoidCallback? dismissAction,
   }) async {
     final dialogTitleWidget = Text(dialogTitle);
     final dialogTextWidget = Text(
       dialogText ??
-          'You can now update this app from ${versionStatus.localVersion} to ${versionStatus.storeVersion}',
+          'You can now update this app from ${versionStatus
+              .localVersion} to ${versionStatus.storeVersion}',
     );
 
     final updateButtonTextWidget = Text(updateButtonText);
     final updateAction = () {
       _launchAppStore(versionStatus.appStoreLink);
       if (allowDismissal) {
-        Navigator.of(context, rootNavigator: true).pop();
+        Navigator.of(context, rootNavigator: true).pop(true);
       }
     };
 
     List<Widget> actions = [
       Platform.isAndroid
           ? TextButton(
-              child: updateButtonTextWidget,
-              onPressed: updateAction,
-            )
+        child: updateButtonTextWidget,
+        onPressed: updateAction,
+      )
           : CupertinoDialogAction(
-              child: updateButtonTextWidget,
-              onPressed: updateAction,
-            ),
+        child: updateButtonTextWidget,
+        onPressed: updateAction,
+      ),
     ];
 
     if (allowDismissal) {
       final dismissButtonTextWidget = Text(dismissButtonText);
       dismissAction = dismissAction ??
-          () => Navigator.of(context, rootNavigator: true).pop();
+              () => Navigator.of(context, rootNavigator: true).pop(false);
       actions.add(
         Platform.isAndroid
             ? TextButton(
-                child: dismissButtonTextWidget,
-                onPressed: dismissAction,
-              )
+          child: dismissButtonTextWidget,
+          onPressed: dismissAction,
+        )
             : CupertinoDialogAction(
-                child: dismissButtonTextWidget,
-                onPressed: dismissAction,
-              ),
+          child: dismissButtonTextWidget,
+          onPressed: dismissAction,
+        ),
       );
     }
 
-    showDialog(
+    if (reversedButtons) {
+      actions = actions.reversed
+          .toList();
+    }
+
+    return await showDialog(
       context: context,
-      barrierDismissible: allowDismissal,
+      barrierDismissible: !allowDismissal || barrierDismissible,
       builder: (BuildContext context) {
         return WillPopScope(
             child: Platform.isAndroid
                 ? AlertDialog(
-                    title: dialogTitleWidget,
-                    content: dialogTextWidget,
-                    actions: actions,
-                  )
+              title: dialogTitleWidget,
+              content: dialogTextWidget,
+              actions: actions,
+            )
                 : CupertinoAlertDialog(
-                    title: dialogTitleWidget,
-                    content: dialogTextWidget,
-                    actions: actions,
-                  ),
+              title: dialogTitleWidget,
+              content: dialogTextWidget,
+              actions: actions,
+            ),
             onWillPop: () => Future.value(allowDismissal));
       },
     );
